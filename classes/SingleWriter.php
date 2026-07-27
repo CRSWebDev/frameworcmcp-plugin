@@ -115,6 +115,8 @@ class SingleWriter
      */
     public static function write(string $handle, array $data): array
     {
+        SchemaGuard::assertReady();
+
         $record = static::record($handle);
         $schema = static::schema($handle);
 

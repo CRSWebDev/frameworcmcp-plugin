@@ -4,6 +4,7 @@ use CRSCompany\FrameworCMcp\Classes\ApiException;
 use CRSCompany\FrameworCMcp\Classes\BlockSchema;
 use CRSCompany\FrameworCMcp\Classes\PageSerializer;
 use CRSCompany\FrameworCMcp\Classes\PageWriter;
+use CRSCompany\FrameworCMcp\Classes\SchemaGuard;
 use CRSCompany\FrameworCMcp\Classes\SingleWriter;
 use CRSCompany\FrameworCMcp\Classes\SiteResolver;
 use CRSCompany\FrameworCMcp\Classes\TokenGuard;
@@ -71,7 +72,12 @@ class Api
         try {
             TokenGuard::check($request);
 
-            return response()->json(['sites' => SiteResolver::listSites()]);
+            return response()->json([
+                'sites' => SiteResolver::listSites(),
+                // Surfaced here so a stale database is visible before the first
+                // write fails, rather than after.
+                'schema' => SchemaGuard::report(),
+            ]);
         }
         catch (ApiException $ex) {
             return $ex->toResponse();

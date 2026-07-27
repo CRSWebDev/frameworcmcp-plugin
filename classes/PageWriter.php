@@ -36,6 +36,8 @@ class PageWriter
         $pageData = (array) ($payload['page'] ?? []);
         $blocks = $payload['builder'] ?? null;
 
+        SchemaGuard::assertReady();
+
         static::validatePage($pageData, true);
         static::validateSlugAvailable($pageData['slug'], $pageData['parent_id'] ?? null, null);
 
@@ -69,6 +71,8 @@ class PageWriter
     {
         $pageData = (array) ($payload['page'] ?? []);
         $blocks = $payload['builder'] ?? null;
+
+        SchemaGuard::assertReady();
 
         if ($pageData) {
             static::validatePage($pageData, false);
@@ -121,6 +125,8 @@ class PageWriter
      */
     public static function createTranslation(EntryRecord $source, array $payload): EntryRecord
     {
+        SchemaGuard::assertReady();
+
         $siteId = (int) $payload['site_id'];
         $pageData = (array) ($payload['page'] ?? []);
         $blocks = $payload['builder'] ?? null;
