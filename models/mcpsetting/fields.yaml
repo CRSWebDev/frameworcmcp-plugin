@@ -1,0 +1,26 @@
+fields:
+    _intro:
+        type: hint
+        mode: tip
+        commentHtml: true
+        comment: >
+            <p>Toto API umožňuje AI asistentovi (Claude, Cursor a další) vytvářet a upravovat stránky
+            postavené na FrameworC. Komunikace probíhá přes <code>/api/mcp/v1</code>.</p>
+            <p>Vygenerujte si náhodný token, například příkazem <code>openssl rand -hex 32</code>,
+            vložte ho níže a stejnou hodnotu zapište do souboru
+            <code>~/.config/frameworc/sites.json</code> na svém počítači.</p>
+
+    api_token:
+        label: MCP API token
+        type: sensitive
+        tab: API
+        comment: 'Dokud je pole prázdné, je API vypnuté a vrací chybu 503.'
+
+    _security:
+        type: hint
+        mode: warning
+        tab: API
+        commentHtml: true
+        comment: >
+            <p>Token má plný přístup k obsahu webu. Zacházejte s ním jako s heslem –
+            nikdy ho neukládejte do gitu a při podezření na únik ho změňte.</p>
