@@ -114,6 +114,7 @@ class SettingsBridge
     {
         $schema = static::schema();
         $errors = [];
+        $coerced = [];
 
         foreach ($fields as $name => $value) {
             if (!isset($schema[$name])) {
@@ -128,7 +129,20 @@ class SettingsBridge
                 && !in_array((string) $value, array_map('strval', array_keys($spec['options'])), true)) {
                 $errors['fields.' . $name] = 'Invalid value "' . $value . '". Allowed: '
                     . implode(', ', array_keys($spec['options'])) . '.';
+                continue;
             }
+
+            // Validate the value's type and coerce it to the stored shape, so a
+            // JSON string/number landing in a switch or list cannot be merged
+            // into the wrapper as the wrong type. Null/empty clears the field.
+            $checked = static::coerceValue($value, $spec, $invalidValue);
+
+            if ($invalidValue !== null) {
+                $errors['fields.' . $name] = $invalidValue;
+                continue;
+            }
+
+            $coerced[$name] = $checked;
         }
 
         if ($errors) {
@@ -139,7 +153,7 @@ class SettingsBridge
         // untouched.
         $wrapper = (array) FrameworcSetting::instance()->wrapper;
 
-        foreach ($fields as $name => $value) {
+        foreach ($coerced as $name => $value) {
             $wrapper[$name] = $value;
         }
 
@@ -147,6 +161,65 @@ class SettingsBridge
         FrameworcSetting::clearInternalCache();
 
         return static::read();
+    }
+
+    /**
+     * coerceValue validates the value's type and casts it to the stored shape.
+     *
+     * Returns the cast value, or null when the input is empty. A null return
+     * paired with a non-empty input signals a type mismatch so the caller can
+     * report it as a validation error rather than silently storing null.
+     */
+    protected static function coerceValue($value, array $spec, ?string &$invalidValue)
+    {
+        $invalidValue = null;
+        $type = $spec['type'] ?? 'text';
+
+        if ($value === null || $value === '' || $value === []) {
+            return null;
+        }
+
+        if ($type === 'switch') {
+            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? '1' : '0';
+        }
+
+        if (in_array($type, ['taglist', 'checkboxlist'], true)) {
+            $list = is_array($value) ? array_values($value) : [$value];
+            $out = [];
+
+            foreach ($list as $single) {
+                if (is_scalar($single)) {
+                    $out[] = (string) $single;
+                    continue;
+                }
+
+                $invalidValue = 'Expected an array of strings.';
+                return null;
+            }
+
+            return $out;
+        }
+
+        if ($type === 'number') {
+            if (!is_numeric($value)) {
+                $invalidValue = 'Expected a number.';
+                return null;
+            }
+
+            return (float) $value;
+        }
+
+        if (in_array($type, ['mediafinder', 'fileupload'], true)) {
+            $invalidValue = 'Media fields cannot be set over the API.';
+            return null;
+        }
+
+        if (!is_scalar($value)) {
+            $invalidValue = 'Expected a scalar value.';
+            return null;
+        }
+
+        return $value;
     }
 
     /**

@@ -67,7 +67,7 @@ class SingleWriter extends ContentWriter
      */
     public static function write(string $handle, array $data): array
     {
-        SchemaGuard::assertReady();
+        SchemaGuard::assertReady($handle);
 
         $record = static::record($handle);
         $schema = static::schema($handle);

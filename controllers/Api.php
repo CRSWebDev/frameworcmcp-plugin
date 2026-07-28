@@ -137,6 +137,11 @@ class Api
         return static::run($request, function (Request $request) use ($id) {
             $payload = static::payload($request);
 
+            // fullslug is derived and read-only; keep the teaching error in the
+            // writer but strip it from an echoed payload so a get_page ->
+            // update_page round trip does not 422.
+            static::stripReadOnlyRecordKeys($payload, 'page');
+
             $page = PageWriter::update(static::findPage($id), $payload);
 
             return PageSerializer::full($page->fresh());
@@ -145,8 +150,11 @@ class Api
 
     public static function deletePage(Request $request, $id)
     {
-        return static::run($request, function () use ($id) {
+        return static::run($request, function (Request $request) use ($id) {
             $page = static::findPage($id);
+
+            EntryGuard::assertDeletable(BlockSchema::SECTION, $page, (bool) $request->query('force'));
+
             $page->delete();
 
             return ['deleted' => true, 'id' => (int) $id];
@@ -396,7 +404,11 @@ class Api
     public static function updatePrefill(Request $request, $id)
     {
         return static::run($request, function (Request $request) use ($id) {
-            $prefill = PageWriter::update(static::findEntry('Prefill', $id), static::payload($request), 'Prefill');
+            $payload = static::payload($request);
+
+            static::stripReadOnlyRecordKeys($payload, 'prefill');
+
+            $prefill = PageWriter::update(static::findEntry('Prefill', $id), $payload, 'Prefill');
 
             return PageSerializer::prefillFull($prefill->fresh());
         });
@@ -454,7 +466,19 @@ class Api
     {
         return static::run($request, function (Request $request) use ($handle) {
             $data = $request->all();
-            unset($data['site_id']);
+
+            // A single's read returns {handle, id, site_id, fields, schema},
+            // with the writable content nested under `fields`. The writer takes
+            // content at the top level, so unwrap an echoed payload: when
+            // `fields` is present and this single has no real `fields` field,
+            // treat its contents as the payload. The envelope keys (handle, id,
+            // schema, site_id) are stripped either way. site_id is never taken
+            // from the body — site context always comes from the resolver.
+            if (isset($data['fields']) && is_array($data['fields']) && !isset(SingleWriter::schema($handle)['fields'])) {
+                $data = $data['fields'];
+            }
+
+            unset($data['handle'], $data['id'], $data['schema'], $data['site_id']);
 
             return SingleWriter::write($handle, $data);
         });
@@ -487,6 +511,22 @@ class Api
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
+
+    /**
+     * stripReadOnlyRecordKeys removes read-only record attributes the serializer
+     * emits so an echoed payload round-trips through the writer's validator.
+     *
+     * Only `fullslug` is an error in the validator; the record id, site_id and
+     * timestamps are silently ignored by fillPage already. Stripping fullslug
+     * preserves the teaching nudge for genuinely-unknown attempts while
+     * keeping a get -> update round trip from failing.
+     */
+    protected static function stripReadOnlyRecordKeys(array &$payload, string $key): void
+    {
+        if (isset($payload[$key]) && is_array($payload[$key])) {
+            unset($payload[$key]['fullslug']);
+        }
+    }
 
     /**
      * payload unwraps the MCP's optional `payload` envelope.

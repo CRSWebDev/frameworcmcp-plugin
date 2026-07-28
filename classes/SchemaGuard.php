@@ -26,8 +26,13 @@ class SchemaGuard
 
     /**
      * @var array sections whose repeater tables the API writes into.
+     *
+     * Builder/Prefill write the builder blocks; Form its grouped field rows;
+     * Menu its navigation tree. The singles (Meta, Navigation, Footer) carry
+     * their own repeaters — e.g. Footer socials, Navigation nav — so they are
+     * checked here too, both on write (SingleWriter::write) and in the report.
      */
-    protected static $sections = ['Builder', 'Prefill', 'Form', 'Menu'];
+    protected static $sections = ['Builder', 'Prefill', 'Form', 'Menu', 'Meta', 'Navigation', 'Footer'];
 
     /**
      * @var array checked memoises the per-section result for the request.
