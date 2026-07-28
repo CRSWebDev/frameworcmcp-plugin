@@ -147,7 +147,15 @@ class FormWriter extends ContentWriter
         $errors = [];
 
         $known = array_merge(static::$entryFields, ['slug', 'is_enabled']);
+        // Read-only artefacts the serializer emits on a form; silently ignored
+        // so a get_form -> update_form round trip is accepted.
+        $ignored = ['id', 'site_id', 'field_count', 'updated_at'];
+
         foreach (array_keys($data) as $key) {
+            if (in_array($key, $ignored, true)) {
+                continue;
+            }
+
             if (!in_array($key, $known, true)) {
                 $errors['form.' . $key] = 'Unknown field. Allowed: ' . implode(', ', $known) . '.';
             }
