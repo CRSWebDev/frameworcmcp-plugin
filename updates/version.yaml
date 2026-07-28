@@ -1,2 +1,3 @@
 v1.0.0: Initial version - HTTP API for frameworc-mcp (pages, blocks, sites, singles)
 v1.0.1: Fail cleanly when the Tailor schema is behind the blueprints (missing site_root_id) instead of a raw SQL error
+v1.1.0: Per-block CRUD on pages and prefills, extract-to-prefill, full forms/menus/prefills CRUD, writable single repeaters, FrameworC settings endpoint

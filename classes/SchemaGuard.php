@@ -25,20 +25,25 @@ class SchemaGuard
     protected static $requiredRepeaterColumns = ['site_root_id', 'parent_id'];
 
     /**
-     * @var bool|null checked memoises the result for the request.
+     * @var array sections whose repeater tables the API writes into.
      */
-    protected static $checked = null;
+    protected static $sections = ['Builder', 'Prefill', 'Form', 'Menu'];
 
     /**
-     * assertReady throws when the Tailor tables are behind the blueprints.
+     * @var array checked memoises the per-section result for the request.
      */
-    public static function assertReady(): void
+    protected static $checked = [];
+
+    /**
+     * assertReady throws when a section's tables are behind the blueprints.
+     */
+    public static function assertReady(string $section = BlockSchema::SECTION): void
     {
-        if (static::$checked === true) {
+        if (!empty(static::$checked[$section])) {
             return;
         }
 
-        $missing = static::missingColumns();
+        $missing = static::missingColumns($section);
 
         if ($missing) {
             throw new ApiException(
@@ -50,15 +55,15 @@ class SchemaGuard
             );
         }
 
-        static::$checked = true;
+        static::$checked[$section] = true;
     }
 
     /**
      * missingColumns returns the shortfall, or null when the schema is fine.
      */
-    public static function missingColumns(): ?array
+    public static function missingColumns(string $section = BlockSchema::SECTION): ?array
     {
-        $blueprint = BlueprintIndexer::instance()->findByHandle(BlockSchema::SECTION);
+        $blueprint = BlueprintIndexer::instance()->findByHandle($section);
 
         if (!$blueprint) {
             return null;
@@ -81,12 +86,20 @@ class SchemaGuard
      */
     public static function report(): array
     {
-        $missing = static::missingColumns();
+        $missing = [];
+
+        foreach (static::$sections as $section) {
+            $shortfall = static::missingColumns($section);
+
+            if ($shortfall) {
+                $missing[] = $shortfall;
+            }
+        }
 
         return [
-            'writable' => $missing === null,
-            'missing' => $missing,
-            'remedy' => $missing === null
+            'writable' => $missing === [],
+            'missing' => $missing ?: null,
+            'remedy' => $missing === []
                 ? null
                 : 'Run "php artisan tailor:migrate" on the server. "october:migrate" will not fix this.',
         ];

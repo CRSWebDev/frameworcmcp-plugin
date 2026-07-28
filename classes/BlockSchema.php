@@ -5,6 +5,7 @@ use Tailor\Classes\FieldManager;
 use Tailor\ContentFields\EntriesField;
 use Tailor\ContentFields\MediaFinderField;
 use Tailor\ContentFields\NestedFormField;
+use Tailor\ContentFields\NestedItemsField;
 use Tailor\ContentFields\RepeaterField;
 
 /**
@@ -32,6 +33,11 @@ class BlockSchema
     protected static $schema = null;
 
     /**
+     * @var array blueprints memoises forBlueprint per handle.
+     */
+    protected static $blueprints = [];
+
+    /**
      * @var array presentational field types that never carry a value.
      */
     protected static $ignoredTypes = ['section', 'hint', 'partial', 'ruler'];
@@ -53,7 +59,7 @@ class BlockSchema
         'Gallery' => 'Several images shown together in a masonry grid with a lightbox.',
         'Downloads' => 'Document, spec or PDF lists. Each row has a name, an icon, an optional description and a file.',
         'Columns' => 'Two to four distinct blocks side by side on desktop. Each column holds its own full builder array, so any block type can be nested. Avoid deep nesting.',
-        'Prefill' => 'Shared blocks reused across pages, such as a newsletter call to action. The content lives on the Prefill entry; get its id from GET /prefills. Not for one-off content.',
+        'Prefill' => 'Shared blocks reused across pages, such as a newsletter call to action. The content lives on the Prefill entry; get its id from GET /prefills. Whenever the same section would appear on more than one page, do NOT copy it: keep it in one Prefill entry and insert this block on every page that needs it. An existing page block can be moved into a new Prefill with POST /pages/{id}/blocks/{blockId}/extract-to-prefill. Not for one-off content.',
         'BlogList' => 'A blog index or category listing. Pulls BlogPost entries automatically.',
         'MenuBlock' => 'Embeds an existing Menu entry as page content. Get its id from GET /menus.',
         'ImageStrip' => 'A horizontally scrolling strip of logos or photos, optionally auto-scrolling.',
@@ -127,6 +133,27 @@ class BlockSchema
     public static function names(): array
     {
         return array_keys(static::all());
+    }
+
+    /**
+     * forBlueprint derives the field schema of any blueprint by handle.
+     *
+     * This is the walker the singles, forms and settings endpoints share, so
+     * every feature describes and validates fields identically.
+     */
+    public static function forBlueprint(string $handle): array
+    {
+        if (isset(static::$blueprints[$handle])) {
+            return static::$blueprints[$handle];
+        }
+
+        $blueprint = BlueprintIndexer::instance()->findByHandle($handle);
+
+        if (!$blueprint) {
+            throw ApiException::notFound('No blueprint with handle "' . $handle . '".');
+        }
+
+        return static::$blueprints[$handle] = static::walk(['fields' => (array) $blueprint->fields]);
     }
 
     /**
@@ -212,9 +239,23 @@ class BlockSchema
                 $spec['entries_source'] = $config['source'] ?? null;
                 $spec['max_items'] = $config['maxItems'] ?? null;
                 $spec['column'] = $fieldName . '_id';
+
+                // Without maxItems: 1 the relation is join-table backed and is
+                // written as an array of ids, even when validation caps it.
+                if (($config['maxItems'] ?? null) !== 1) {
+                    $spec['multiple'] = true;
+                }
             }
 
             if ($field instanceof NestedFormField) {
+                $spec['fields'] = static::walk((array) $field->fieldsetConfig, $depth + 1);
+            }
+
+            if ($field instanceof NestedItemsField) {
+                // A sortable tree of uniform rows, e.g. a menu's navigation.
+                $spec['repeater'] = true;
+                $spec['tree'] = true;
+                $spec['max_depth'] = (int) ($config['maxDepth'] ?? 1);
                 $spec['fields'] = static::walk((array) $field->fieldsetConfig, $depth + 1);
             }
 
@@ -223,9 +264,27 @@ class BlockSchema
                 $fieldsetConfig = (array) $field->fieldsetConfig;
 
                 if (static::isGroupedRepeater($fieldsetConfig)) {
-                    // A nested builder: the same block catalogue, recursively.
-                    $spec['groups'] = array_keys($fieldsetConfig);
-                    $spec['recursive'] = true;
+                    if (static::isBuilderRepeater($fieldsetConfig)) {
+                        // A nested builder: the same block catalogue, recursively.
+                        $spec['groups'] = array_keys($fieldsetConfig);
+                        $spec['recursive'] = true;
+                    }
+                    else {
+                        // Any other grouped repeater, e.g. a form's fields:
+                        // every group gets its own walked field map.
+                        $spec['grouped'] = true;
+                        $groups = [];
+
+                        foreach ($fieldsetConfig as $groupName => $groupConfig) {
+                            $groupConfig = (array) $groupConfig;
+                            $groups[$groupName] = [
+                                'label' => $groupConfig['name'] ?? $groupName,
+                                'fields' => static::walk($groupConfig, $depth + 1),
+                            ];
+                        }
+
+                        $spec['groups'] = $groups;
+                    }
                 }
                 else {
                     $spec['fields'] = static::walk($fieldsetConfig, $depth + 1);
@@ -260,6 +319,20 @@ class BlockSchema
         return !isset($config['fields'])
             && !isset($config['tabs'])
             && !isset($config['secondaryTabs']);
+    }
+
+    /**
+     * isBuilderRepeater recognises the page-builder group set.
+     *
+     * Compared against the raw repeater config, never names(), because names()
+     * runs walk() and this is called from inside walk().
+     */
+    protected static function isBuilderRepeater(array $config): bool
+    {
+        $builderKeys = array_keys(static::groups());
+        $groupKeys = array_keys($config);
+
+        return !array_diff($groupKeys, $builderKeys) && !array_diff($builderKeys, $groupKeys);
     }
 
     /**

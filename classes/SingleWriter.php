@@ -1,17 +1,20 @@
 <?php namespace CRSCompany\FrameworCMcp\Classes;
 
+use DB;
 use Site;
 use Tailor\Classes\BlueprintIndexer;
-use Tailor\Classes\FieldManager;
 use Tailor\Models\EntryRecord;
 
 /**
  * SingleWriter reads and writes the per-site Tailor singles.
  *
- * These hold site-wide settings such as SEO defaults and the blog base path,
- * so an assistant scaffolding a site can set them alongside its pages.
+ * These hold site-wide settings such as SEO defaults, the navbar and the
+ * footer, so an assistant scaffolding a site can set them alongside its pages.
+ * Fields go through the same schema walker, writer and serializer as every
+ * other feature: repeaters (e.g. the footer's socials) and entries references
+ * (e.g. the linked Menu) are fully supported; media stays read-only.
  */
-class SingleWriter
+class SingleWriter extends ContentWriter
 {
     /**
      * @var array allowed handles. Deliberately a fixed list: these are the
@@ -35,52 +38,7 @@ class SingleWriter
     {
         static::assertAllowed($handle);
 
-        $blueprint = BlueprintIndexer::instance()->findByHandle($handle);
-
-        if (!$blueprint) {
-            throw ApiException::notFound('No blueprint with handle "' . $handle . '".');
-        }
-
-        $fields = FieldManager::instance()
-            ->makeFieldset(['fields' => (array) $blueprint->fields])
-            ->getAllFields();
-
-        $out = [];
-
-        foreach ($fields as $name => $field) {
-            if (str_starts_with($name, '_')) {
-                continue;
-            }
-
-            $config = (array) $field->config;
-            $type = $config['type'] ?? 'text';
-
-            if (in_array($type, ['section', 'hint', 'partial', 'ruler'], true)) {
-                continue;
-            }
-
-            $spec = ['type' => $type];
-
-            if (!empty($config['label'])) {
-                $spec['label'] = $config['label'];
-            }
-            if (!empty($config['options'])) {
-                $spec['options'] = (array) $config['options'];
-            }
-            if ($field instanceof \Tailor\ContentFields\MediaFinderField || $type === 'fileupload') {
-                $spec['readonly'] = true;
-            }
-            if ($field instanceof \Tailor\ContentFields\RepeaterField) {
-                // Navigation and Footer hold repeaters; expose them read-only
-                // rather than half-supporting a write path nobody asked for.
-                $spec['repeater'] = true;
-                $spec['readonly'] = true;
-            }
-
-            $out[$name] = $spec;
-        }
-
-        return $out;
+        return BlockSchema::forBlueprint($handle);
     }
 
     /**
@@ -91,27 +49,21 @@ class SingleWriter
         $record = static::record($handle);
         $schema = static::schema($handle);
 
-        $values = [];
-
-        foreach ($schema as $name => $spec) {
-            if (!empty($spec['repeater'])) {
-                continue;
-            }
-
-            $values[$name] = $record->{$name};
-        }
-
         return [
             'handle' => $handle,
             'id' => (int) $record->id,
             'site_id' => $record->site_id !== null ? (int) $record->site_id : null,
-            'fields' => $values,
+            'fields' => ContentSerializer::contentFields($record, $schema),
             'schema' => $schema,
         ];
     }
 
     /**
      * write updates the single for the active site.
+     *
+     * Scalars are assigned; a repeater or nested form key present in the
+     * payload replaces its stored rows wholesale (they carry no media the API
+     * could lose — media fields themselves are rejected by validation).
      */
     public static function write(string $handle, array $data): array
     {
@@ -120,36 +72,53 @@ class SingleWriter
         $record = static::record($handle);
         $schema = static::schema($handle);
 
+        unset($data['site_id'], $data['handle']);
+
         $errors = [];
-
-        foreach ($data as $name => $value) {
-            if (in_array($name, ['site_id', 'handle'], true)) {
-                continue;
-            }
-
-            if (!isset($schema[$name])) {
-                $errors[$name] = 'Unknown field. Allowed: ' . implode(', ', array_keys($schema)) . '.';
-                continue;
-            }
-
-            if (!empty($schema[$name]['readonly']) && !($value === null || $value === '' || $value === [])) {
-                $errors[$name] = 'This field cannot be set over the API.';
-            }
-        }
+        static::validateFields($data, $schema, 'fields', $errors);
 
         if ($errors) {
             throw ApiException::invalid($errors);
         }
 
-        foreach ($data as $name => $value) {
-            if (!isset($schema[$name]) || !empty($schema[$name]['readonly'])) {
-                continue;
+        DB::transaction(function () use ($record, $data, $schema) {
+            // A join-table entries field with an `array` rule fails validation
+            // whenever the relation is empty: October hands the validator an
+            // explicit null, which the backend never hits because its forms
+            // always post the key. Relax the rule for this save.
+            foreach ($schema as $name => $spec) {
+                if (isset($spec['column']) && !empty($spec['multiple']) && isset($record->rules[$name])) {
+                    $record->addValidationRule($name, 'nullable');
+                }
             }
 
-            $record->{$name} = $value;
-        }
+            $scalars = static::prepare($data, $schema);
 
-        $record->save();
+            foreach ($scalars as $name => $value) {
+                $record->{$name} = $value;
+            }
+
+            $record->save();
+
+            // Replace nested rows for every structured key in the payload.
+            foreach ($data as $name => $value) {
+                $spec = $schema[$name] ?? null;
+
+                if (!$spec || (empty($spec['repeater']) && !isset($spec['fields']))) {
+                    continue;
+                }
+
+                foreach ($record->{$name} as $existing) {
+                    $existing->delete();
+                }
+
+                $record->reloadRelations($name);
+
+                if ($value !== null) {
+                    static::writeNested($record, [$name => $value], [$name => $spec]);
+                }
+            }
+        });
 
         return static::read($handle);
     }
