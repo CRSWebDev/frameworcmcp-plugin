@@ -6,10 +6,22 @@ use Tailor\Models\EntryRecord;
  * EntryGuard blocks deletion of entries other content still points at.
  *
  * Deleting a referenced Form, Menu or Prefill would leave broken blocks on
- * live pages, so the delete endpoints refuse unless the caller forces it.
+ * live pages, so the delete endpoints refuse unless the caller forces it. A
+ * Builder page can also be pointed at by a pagefinder field (every Buttons
+ * mixin's buttonLink, a Menu's navigation items, the Navigation single's
+ * buttons), so those links are tracked too.
  */
 class EntryGuard
 {
+    /**
+     * @var string pattern matching a stored pagefinder link, capturing its id.
+     *
+     * ContentWriter::resolvePageFinder stores links as
+     * `october://entry-{uuid}@link/{pageId}?cms_page=page`; the id is the only
+     * part this guard needs.
+     */
+    const PAGEFINDER_LINK = '/@link\/(\d+)/';
+
     /**
      * assertDeletable throws 422 when the entry is referenced, unless forced.
      */
@@ -37,16 +49,20 @@ class EntryGuard
         $hosts = [];
 
         foreach (['Builder' => 'Page', 'Prefill' => 'Prefill'] as $hostSection => $label) {
-            if ($hostSection === 'Prefill' && $section === 'Prefill') {
-                // A prefill cannot reference another prefill's builder today,
-                // but scanning would still be harmless; skip self-section noise.
-                continue;
-            }
-
+            // A Prefill embeds Mixins/Builder, whose groups include the
+            // Prefill block, so Prefill->Prefill references are real. Skip
+            // only a self-reference (a prefill cannot reference itself) so
+            // the listing is not polluted with the very entry being deleted.
             foreach (EntryRecord::inSection($hostSection)->get() as $record) {
+                if ($hostSection === $section && (int) $record->id === $id) {
+                    continue;
+                }
+
                 $blocks = PageSerializer::blocks($record->builder);
 
-                if (static::blocksReference($blocks, $section, $id)) {
+                if ($section === 'Builder'
+                    ? static::blocksReferencePage($blocks, $id)
+                    : static::blocksReference($blocks, $section, $id)) {
                     $hosts[] = $label . ' "' . $record->title . '" (id ' . $record->id . ')';
                 }
             }
@@ -64,7 +80,71 @@ class EntryGuard
             }
         }
 
+        if ($section === 'Builder') {
+            foreach (static::pageFinderHosts($id) as $host) {
+                $hosts[] = $host;
+            }
+        }
+
         return $hosts;
+    }
+
+    /**
+     * pageFinderHosts lists non-page hosts whose pagefinder links target $id.
+     *
+     * Pagefinder links always resolve against the Builder section, so only
+     * Builder pages can be the link target. Menus link pages in their
+     * navigation tree, and the Navigation single links pages through its buttons
+     * mixin — both surface as `october://...@link/{id}` strings in the
+     * serialized payload.
+     */
+    protected static function pageFinderHosts(int $id): array
+    {
+        $hosts = [];
+
+        foreach (EntryRecord::inSection('Menu')->get() as $menu) {
+            $serialized = MenuSerializer::full($menu);
+
+            if (static::containsPageFinderId($serialized['navigation'] ?? [], $id)) {
+                $hosts[] = 'Menu "' . $menu->title . '" (id ' . $menu->id . ')';
+            }
+        }
+
+        foreach (['Navigation'] as $handle) {
+            $record = EntryRecord::inSection($handle)->first();
+
+            if (!$record) {
+                continue;
+            }
+
+            $serialized = SingleWriter::read($handle);
+
+            if (static::containsPageFinderId($serialized['fields'] ?? [], $id)) {
+                $hosts[] = $handle . ' single';
+            }
+        }
+
+        return $hosts;
+    }
+
+    /**
+     * containsPageFinderId deep-scans a serialized payload for a pagefinder id.
+     */
+    protected static function containsPageFinderId($value, int $id): bool
+    {
+        if (is_string($value)) {
+            return preg_match(static::PAGEFINDER_LINK, $value, $m) && (int) $m[1] === $id;
+        }
+
+        if (is_array($value) || is_object($value)) {
+            foreach ((array) $value as $child) {
+                if (static::containsPageFinderId($child, $id)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -104,6 +184,24 @@ class EntryGuard
                         return true;
                     }
                 }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * blocksReferencePage deep-scans serialized blocks for a pagefinder link.
+     *
+     * Pagefinder ids are stored as `october://...@link/{id}` strings on
+     * pagefinder-typed fields; any such string anywhere in a block (its base,
+     * its content, including nested builders) is a reference.
+     */
+    protected static function blocksReferencePage(array $blocks, int $id): bool
+    {
+        foreach ($blocks as $block) {
+            if (static::containsPageFinderId($block, $id)) {
+                return true;
             }
         }
 

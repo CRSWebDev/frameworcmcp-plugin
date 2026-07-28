@@ -188,6 +188,14 @@ abstract class ContentWriter
                 continue;
             }
 
+            // Media fields are readonly over the API (BlockSchema marks them).
+            // A payload that omits the key never reaches here; one that sends
+            // an empty value would otherwise wipe the stored file, so skip it
+            // entirely — block updates restore media through mergeBlockMedia.
+            if (!empty($spec['readonly'])) {
+                continue;
+            }
+
             if (!empty($spec['repeater']) || isset($spec['fields'])) {
                 continue;
             }
@@ -364,6 +372,12 @@ abstract class ContentWriter
      */
     public static function validateFields(array $data, array $schema, string $path, array &$errors): void
     {
+        // The serializer emits an `id` on every repeater/grouped/tree row and
+        // on options sub-rows; it is reserved and never a writable field, so
+        // silently drop it before the unknown-field check would reject a
+        // round-tripped payload.
+        unset($data['id']);
+
         foreach ($data as $name => $value) {
             if (!isset($schema[$name])) {
                 $errors[$path . '.' . $name] = 'Unknown field. Allowed: ' . implode(', ', array_keys($schema)) . '.';

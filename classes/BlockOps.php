@@ -1,6 +1,7 @@
 <?php namespace CRSCompany\FrameworCMcp\Classes;
 
 use DB;
+use Str;
 use Tailor\Models\EntryRecord;
 
 /**
@@ -173,7 +174,14 @@ class BlockOps
             $serialized = PageSerializer::block($existing);
             $blockLabel = $serialized['base']['blockId'] ?? null;
 
-            $prefill = PageWriter::create(['prefill' => ['title' => $title]], 'Prefill');
+            // The caller names the Prefill by title alone; the slug is derived,
+            // so a reused title would 422 on the inherited unique-slug check
+            // with a field the caller cannot set. Resolve an unused slug here,
+            // scoped to Prefills, so the dedup workflow succeeds on repeats.
+            $prefill = PageWriter::create(
+                ['prefill' => ['title' => $title, 'slug' => static::uniquePrefillSlug($title)]],
+                'Prefill'
+            );
             PageWriter::writeBlock($prefill, 'builder', $serialized, 1);
             $prefill->reloadRelations('builder');
 
@@ -268,6 +276,23 @@ class BlockOps
 
         $schema = BlockSchema::get($new['content_group']);
 
+        // Block-level entries references (e.g. a Form block's `form`) live
+        // alongside the base fields on the serialized block but are not part
+        // of the base object. Carry them over when the payload omits or
+        // empties them, so updating one block does not silently unlink it.
+        foreach ($schema['base'] as $name => $spec) {
+            if (!isset($spec['column'])) {
+                continue;
+            }
+
+            $newEmpty = !isset($new[$name]) || ContentWriter::isEmptyValue($new[$name]);
+            $oldValue = $old[$name] ?? null;
+
+            if ($newEmpty && !ContentWriter::isEmptyValue($oldValue)) {
+                $new[$name] = $oldValue;
+            }
+        }
+
         $new['base'] = static::mergeFieldsMedia((array) ($new['base'] ?? []), (array) ($old['base'] ?? []), $schema['base']);
         $new['content'] = static::mergeFieldsMedia((array) ($new['content'] ?? []), (array) ($old['content'] ?? []), $schema['content']);
 
@@ -304,18 +329,28 @@ class BlockOps
                 }
 
                 if (!empty($spec['recursive'])) {
+                    $oldById = static::indexById($old[$name]);
+                    $oldByPos = array_values($old[$name]);
+
                     foreach (array_values($new[$name]) as $i => $childBlock) {
-                        if (isset($old[$name][$i])) {
-                            $new[$name][$i] = static::mergeBlockMedia((array) $childBlock, (array) $old[$name][$i]);
+                        $match = static::matchRow((array) $childBlock, $oldById, $oldByPos, $i);
+
+                        if ($match !== null) {
+                            $new[$name][$i] = static::mergeBlockMedia((array) $childBlock, (array) $match);
                         }
                     }
                 }
                 elseif (empty($spec['grouped'])) {
+                    $oldById = static::indexById($old[$name]);
+                    $oldByPos = array_values($old[$name]);
+
                     foreach (array_values($new[$name]) as $i => $childRow) {
-                        if (isset($old[$name][$i])) {
+                        $match = static::matchRow((array) $childRow, $oldById, $oldByPos, $i);
+
+                        if ($match !== null) {
                             $new[$name][$i] = static::mergeFieldsMedia(
                                 (array) $childRow,
-                                (array) $old[$name][$i],
+                                (array) $match,
                                 $spec['fields'] ?? []
                             );
                         }
@@ -332,5 +367,74 @@ class BlockOps
         }
 
         return $new;
+    }
+
+    /**
+     * indexById keys a serialized row list by its `id` when present.
+     *
+     * Empty rows (no id) are grouped under a synthetic negative index so they
+     * never collide with real rows; they are only reachable positionally.
+     */
+    protected static function indexById(array $rows): array
+    {
+        $byId = [];
+        $synthetic = -1;
+
+        foreach ($rows as $row) {
+            $row = (array) $row;
+
+            if (isset($row['id']) && !is_array($row['id'])) {
+                $byId[(int) $row['id']] = $row;
+                continue;
+            }
+
+            $byId[$synthetic--] = $row;
+        }
+
+        return $byId;
+    }
+
+    /**
+     * matchRow finds the old row corresponding to a new payload row.
+     *
+     * Rows carry no stable identity for their children in the public contract,
+     * but the serializer emits an `id` on every row, so prefer it for exact
+     * matching; fall back to position so a payload built by hand still works.
+     * Matching by id is what stops a reordered or deleted repeater row from
+     * inheriting its neighbour's media.
+     */
+    protected static function matchRow(array $new, array $byId, array $byPos, int $pos): ?array
+    {
+        if (isset($new['id']) && !is_array($new['id']) && isset($byId[(int) $new['id']])) {
+            return $byId[(int) $new['id']];
+        }
+
+        return $byPos[$pos] ?? null;
+    }
+
+    /**
+     * uniquePrefillSlug returns an unused Prefill slug for a title.
+     *
+     * Prefills are referenced by id and never routed by slug, so collisions
+     * are not meaningful — they only trip the inherited unique-slug guard. A
+     * reused title therefore gets a -2, -3, ... suffix, matching the backend's
+     * own behaviour for duplicated slugs.
+     */
+    protected static function uniquePrefillSlug(string $title): string
+    {
+        $base = Str::slug($title);
+
+        if ($base === '') {
+            $base = 'prefill';
+        }
+
+        $slug = $base;
+        $i = 2;
+
+        while (EntryRecord::inSection('Prefill')->where('slug', $slug)->exists()) {
+            $slug = $base . '-' . $i++;
+        }
+
+        return $slug;
     }
 }
