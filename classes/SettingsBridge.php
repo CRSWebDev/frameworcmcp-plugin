@@ -68,7 +68,7 @@ class SettingsBridge
 
             $spec = ['type' => $type];
 
-            foreach (['label', 'default', 'comment', 'tab'] as $carry) {
+            foreach (['label', 'default', 'comment', 'tab', 'mode', 'maxItems'] as $carry) {
                 if (isset($field[$carry])) {
                     $spec[$carry] = $field[$carry];
                 }
@@ -209,9 +209,35 @@ class SettingsBridge
             return (float) $value;
         }
 
-        if (in_array($type, ['mediafinder', 'fileupload'], true)) {
-            $invalidValue = 'Media fields cannot be set over the API.';
+        if ($type === 'fileupload') {
+            $invalidValue = 'This field is a database attachment and cannot be set over the API.';
             return null;
+        }
+
+        // No settings field is a mediafinder today, so this branch is unused.
+        // It is kept in step with the block writer so that adding one to
+        // models/frameworcsetting/fields.yaml just works.
+        if ($type === 'mediafinder') {
+            $path = MediaPaths::normalise($value, $error);
+
+            if ($error !== null) {
+                $invalidValue = $error;
+                return null;
+            }
+
+            $single = ($spec['maxItems'] ?? 1) === 1;
+
+            if ($path === '') {
+                return $single ? '' : [];
+            }
+
+            if (!MediaPaths::fileExists($path)) {
+                $invalidValue = 'No file at "' . $path . '" in the media library. '
+                    . 'Call GET /media or GET /media/search to find the real path; this API cannot upload files.';
+                return null;
+            }
+
+            return $single ? $path : [$path];
         }
 
         if (!is_scalar($value)) {

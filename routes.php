@@ -8,7 +8,11 @@ use Illuminate\Http\Request;
  *
  * Paths mirror frameworc-mcp's src/api-client.ts exactly; do not rename them
  * without shipping a matching MCP release. Literal segments (blocks/order,
- * forms/schema) are registered before their {param} siblings on purpose.
+ * forms/schema, media/search) are registered before their {param} siblings on
+ * purpose.
+ *
+ * Version pairs: plugin v1.2.0 <-> MCP v0.5.0 added GET media and
+ * GET media/search, and made mediafinder fields writable.
  */
 Route::group([
     'prefix' => 'api/mcp/v1',
@@ -18,6 +22,10 @@ Route::group([
 
     Route::get('blocks', fn (Request $r) => Api::blocks($r));
     Route::get('blocks/{name}', fn (Request $r, $name) => Api::block($r, $name));
+
+    // Media library (global, not site-scoped: one storage disk per install)
+    Route::get('media/search', fn (Request $r) => Api::searchMedia($r));
+    Route::get('media', fn (Request $r) => Api::listMedia($r));
 
     // Pages
     Route::get('pages', fn (Request $r) => Api::listPages($r));

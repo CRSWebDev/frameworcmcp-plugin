@@ -7,6 +7,7 @@ use CRSCompany\FrameworCMcp\Classes\EntryGuard;
 use CRSCompany\FrameworCMcp\Classes\FormSerializer;
 use CRSCompany\FrameworCMcp\Classes\FormWriter;
 use CRSCompany\FrameworCMcp\Classes\MenuSerializer;
+use CRSCompany\FrameworCMcp\Classes\MediaPaths;
 use CRSCompany\FrameworCMcp\Classes\MenuWriter;
 use CRSCompany\FrameworCMcp\Classes\PageSerializer;
 use CRSCompany\FrameworCMcp\Classes\PageWriter;
@@ -16,6 +17,8 @@ use CRSCompany\FrameworCMcp\Classes\SingleWriter;
 use CRSCompany\FrameworCMcp\Classes\SiteResolver;
 use CRSCompany\FrameworCMcp\Classes\TokenGuard;
 use Illuminate\Http\Request;
+use Media\Classes\MediaLibrary;
+use Media\Classes\MediaLibraryItem;
 use October\Rain\Database\ModelException;
 use Tailor\Models\EntryRecord;
 use Throwable;
@@ -99,6 +102,232 @@ class Api
     public static function block(Request $request, string $name)
     {
         return static::run($request, fn () => BlockSchema::get($name));
+    }
+
+    // ------------------------------------------------------------------
+    // Media library
+    // ------------------------------------------------------------------
+
+    /**
+     * listMedia browses one folder of the media library.
+     *
+     * Assignment only: the MCP writes a returned `path` into a mediafinder
+     * field. There is no upload endpoint, by design.
+     *
+     * The library is global, so site_id is accepted and ignored, as in
+     * getSettings. CRSCompany\MediaRestrict does not scope this either — its
+     * MediaPathGuard only recognises backend requests, and a per-user folder
+     * has no meaning for a token that is an install-wide credential.
+     */
+    public static function listMedia(Request $request)
+    {
+        return static::run($request, function (Request $request) {
+            $folder = MediaPaths::normalise($request->query('folder', '/'), $error, true);
+
+            if ($error !== null) {
+                throw ApiException::invalid(['folder' => $error]);
+            }
+
+            $folder = ($folder === null || $folder === '') ? '/' : $folder;
+
+            // listFolderContents returns [] for a missing folder rather than
+            // failing, so the 404 has to be raised here.
+            if (!MediaPaths::folderExists($folder)) {
+                throw new ApiException('No folder at "' . $folder . '" in the media library.', 404);
+            }
+
+            $limit = static::clampPageSize($request->query('limit'), 100, 500);
+            $offset = max(0, (int) $request->query('offset', 0));
+
+            $items = MediaLibrary::instance()->listFolderContents(
+                $folder,
+                static::mediaSort($request),
+                static::mediaType($request)
+            );
+
+            $folders = [];
+            $files = [];
+
+            foreach ($items as $item) {
+                if ($item->type === MediaLibraryItem::TYPE_FOLDER) {
+                    $folders[] = MediaPaths::describeFolder($item);
+                }
+                else {
+                    $files[] = $item;
+                }
+            }
+
+            // Folders are few and orientation matters more than volume, so
+            // only the file list is paged.
+            $page = array_slice($files, $offset, $limit);
+
+            return [
+                'folder' => $folder,
+                'parent' => static::parentFolder($folder),
+                'folders' => $folders,
+                'files' => array_map(fn ($item) => MediaPaths::describe($item), $page),
+                'total_folders' => count($folders),
+                'total_files' => count($files),
+                'limit' => $limit,
+                'offset' => $offset,
+                'truncated' => ($offset + count($page)) < count($files),
+                'note' => static::MEDIA_NOTE,
+            ];
+        });
+    }
+
+    /**
+     * searchMedia finds files by name across the whole library.
+     *
+     * October lowercases the term, splits it on spaces and requires every word
+     * to appear somewhere in the file's full path, so "logo dark" matches
+     * /brand/logo-dark.svg. The scan always starts at the root, so a `folder`
+     * can only be applied afterwards.
+     */
+    public static function searchMedia(Request $request)
+    {
+        return static::run($request, function (Request $request) {
+            $query = trim((string) $request->query('q', ''));
+
+            if (strlen($query) < 2) {
+                throw ApiException::invalid(['q' => 'Enter at least two characters to search.']);
+            }
+
+            $folder = null;
+            $rawFolder = $request->query('folder');
+
+            if ($rawFolder !== null && trim((string) $rawFolder) !== '') {
+                $folder = MediaPaths::normalise($rawFolder, $error, true);
+
+                if ($error !== null) {
+                    throw ApiException::invalid(['folder' => $error]);
+                }
+            }
+
+            $limit = static::clampPageSize($request->query('limit'), 50, 200);
+            $offset = max(0, (int) $request->query('offset', 0));
+
+            $files = MediaLibrary::instance()->findFiles(
+                $query,
+                static::mediaSort($request),
+                static::mediaType($request)
+            );
+
+            if ($folder !== null && $folder !== '/' && $folder !== '') {
+                $prefix = rtrim($folder, '/') . '/';
+                $files = array_values(array_filter(
+                    $files,
+                    fn ($item) => str_starts_with($item->path, $prefix)
+                ));
+            }
+
+            $page = array_slice($files, $offset, $limit);
+
+            return [
+                'query' => $query,
+                'folder' => $folder,
+                'files' => array_map(fn ($item) => MediaPaths::describe($item), $page),
+                'total' => count($files),
+                'limit' => $limit,
+                'offset' => $offset,
+                'truncated' => ($offset + count($page)) < count($files),
+                'note' => static::MEDIA_NOTE,
+            ];
+        });
+    }
+
+    /**
+     * @var string MEDIA_NOTE steers the client away from the two mistakes the
+     * shape invites: writing `url` instead of `path`, and expecting an upload.
+     */
+    const MEDIA_NOTE = 'Assign a file by writing its `path` (not `url`) into a mediafinder field. '
+        . 'This API cannot upload; ask the user to add missing files in Backend > Media.';
+
+    /**
+     * parentFolder returns the containing folder, or null at the root.
+     */
+    protected static function parentFolder(string $folder): ?string
+    {
+        if ($folder === '/' || $folder === '') {
+            return null;
+        }
+
+        // dirname() yields a backslash at the root on Windows.
+        $parent = str_replace('\\', '/', dirname($folder));
+
+        return $parent === '' ? '/' : $parent;
+    }
+
+    /**
+     * mediaSort reads the sort preference.
+     *
+     * The constant is 'modified'. MediaLibrary's own docblock says
+     * 'lastModified', which matches nothing and silently disables sorting.
+     */
+    protected static function mediaSort(Request $request): array
+    {
+        $by = (string) $request->query('sort', MediaLibrary::SORT_BY_TITLE);
+        $direction = strtolower((string) $request->query('direction', MediaLibrary::SORT_DIRECTION_ASC));
+
+        $allowedSorts = [
+            MediaLibrary::SORT_BY_TITLE,
+            MediaLibrary::SORT_BY_SIZE,
+            MediaLibrary::SORT_BY_MODIFIED,
+        ];
+
+        if (!in_array($by, $allowedSorts, true)) {
+            throw ApiException::invalid(['sort' => 'Allowed: ' . implode(', ', $allowedSorts) . '.']);
+        }
+
+        $allowedDirections = [MediaLibrary::SORT_DIRECTION_ASC, MediaLibrary::SORT_DIRECTION_DESC];
+
+        if (!in_array($direction, $allowedDirections, true)) {
+            throw ApiException::invalid(['direction' => 'Allowed: ' . implode(', ', $allowedDirections) . '.']);
+        }
+
+        return ['by' => $by, 'direction' => $direction];
+    }
+
+    /**
+     * mediaType reads the file-type filter.
+     *
+     * The buckets come from config media.image_extensions and friends, so they
+     * are install-dependent: SVG counts as an image on an install that adds it
+     * to that list (this one does) and as a document on one that does not.
+     * Filtering by type is therefore a convenience, never a guarantee.
+     */
+    protected static function mediaType(Request $request): ?string
+    {
+        $type = $request->query('type');
+
+        if ($type === null || trim((string) $type) === '') {
+            return null;
+        }
+
+        $allowed = [
+            MediaLibraryItem::FILE_TYPE_IMAGE,
+            MediaLibraryItem::FILE_TYPE_VIDEO,
+            MediaLibraryItem::FILE_TYPE_AUDIO,
+            MediaLibraryItem::FILE_TYPE_DOCUMENT,
+        ];
+
+        if (!in_array($type, $allowed, true)) {
+            throw ApiException::invalid(['type' => 'Allowed: ' . implode(', ', $allowed) . '.']);
+        }
+
+        return $type;
+    }
+
+    /**
+     * clampPageSize bounds a caller-supplied page size.
+     */
+    protected static function clampPageSize($value, int $default, int $max): int
+    {
+        if ($value === null || !is_numeric($value)) {
+            return $default;
+        }
+
+        return max(1, min($max, (int) $value));
     }
 
     // ------------------------------------------------------------------

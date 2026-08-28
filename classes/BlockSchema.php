@@ -229,9 +229,22 @@ class BlockSchema
                 $spec['comment'] = $config['comment'];
             }
 
-            if ($field instanceof MediaFinderField || $type === 'fileupload') {
-                // Media cannot be assigned over the API; a human picks files in
-                // the backend media library.
+            if ($field instanceof MediaFinderField) {
+                // A media library path, not a relation: maxItems 1 stores a
+                // plain string, anything else is jsonable and stores a list.
+                // Assignable over the API from files that already exist —
+                // see Classes\MediaPaths.
+                $spec['media'] = true;
+                $spec['max_items'] = $config['maxItems'] ?? null;
+                $spec['multiple'] = ($config['maxItems'] ?? null) !== 1;
+
+                if (!empty($config['mode'])) {
+                    $spec['mode'] = $config['mode'];
+                }
+            }
+            elseif ($type === 'fileupload') {
+                // A database-backed attachment rather than a library path;
+                // there is nothing for the API to address.
                 $spec['readonly'] = true;
             }
 

@@ -80,7 +80,7 @@ class FormWriter extends ContentWriter
     /**
      * update edits form attributes and optionally rebuilds the field rows.
      *
-     * The rows carry no media, so a full rebuild loses nothing.
+     * Form fields carry no media, so a full rebuild loses nothing.
      */
     public static function update(EntryRecord $form, array $payload): EntryRecord
     {

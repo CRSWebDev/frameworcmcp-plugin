@@ -8,7 +8,7 @@ use Tailor\Models\EntryRecord;
  * MenuWriter creates and edits Menu entries with their navigation tree.
  *
  * The tree is stored as flat rows linked by parent_id; a write replaces the
- * whole tree, which is safe because menu items carry no media.
+ * whole tree, which is safe because menu items carry no media fields at all.
  */
 class MenuWriter extends ContentWriter
 {

@@ -188,11 +188,15 @@ abstract class ContentWriter
                 continue;
             }
 
-            // Media fields are readonly over the API (BlockSchema marks them).
-            // A payload that omits the key never reaches here; one that sends
-            // an empty value would otherwise wipe the stored file, so skip it
-            // entirely — block updates restore media through mergeBlockMedia.
+            // fileupload only: a database attachment the API cannot address.
             if (!empty($spec['readonly'])) {
+                continue;
+            }
+
+            if (!empty($spec['media'])) {
+                // A key absent from the payload never reaches here, so an
+                // explicit value — a path or an empty one — is always meant.
+                $out[$name] = static::castMediaIn($data[$name], $spec);
                 continue;
             }
 
@@ -213,6 +217,38 @@ abstract class ContentWriter
         }
 
         return $out;
+    }
+
+    /**
+     * castMediaIn converts a media payload value into what Tailor stores.
+     *
+     * A maxItems:1 mediafinder is a plain string column and stores '' when
+     * unset; any other is jsonable and stores a list. Both shapes match what
+     * the backend media widget writes, which is what lets a block round-trip
+     * through the API and still open correctly in the backend.
+     *
+     * Paths are already validated by validateMedia at this point, so a value
+     * that fails to normalise here is dropped rather than reported.
+     */
+    public static function castMediaIn($value, array $spec)
+    {
+        $multiple = !empty($spec['multiple']);
+
+        if (static::isEmptyValue($value)) {
+            return $multiple ? [] : '';
+        }
+
+        $paths = [];
+
+        foreach ((is_array($value) ? $value : [$value]) as $single) {
+            $path = MediaPaths::normalise($single, $error);
+
+            if ($error === null && $path !== null && $path !== '') {
+                $paths[] = $path;
+            }
+        }
+
+        return $multiple ? $paths : ($paths[0] ?? '');
     }
 
     /**
@@ -388,7 +424,12 @@ abstract class ContentWriter
             $at = $path . '.' . $name;
 
             if (!empty($spec['readonly']) && !static::isEmptyValue($value)) {
-                $errors[$at] = 'Media fields cannot be set over the API. Leave it empty and assign the file in the backend.';
+                $errors[$at] = 'This field is a database attachment and cannot be set over the API.';
+                continue;
+            }
+
+            if (!empty($spec['media'])) {
+                static::validateMedia($value, $spec, $at, $errors);
                 continue;
             }
 
@@ -453,6 +494,64 @@ abstract class ContentWriter
                         break;
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * validateMedia checks a media library assignment.
+     *
+     * An empty value is valid and means "clear this field" — the caller can
+     * only reach here by sending the key explicitly, since prepare() and the
+     * media merge both key off the presence of the key, not its value.
+     */
+    public static function validateMedia($value, array $spec, string $path, array &$errors): void
+    {
+        if (static::isEmptyValue($value)) {
+            return;
+        }
+
+        $multiple = !empty($spec['multiple']);
+
+        if (!$multiple && is_array($value)) {
+            $errors[$path] = 'Expected a single media path string such as "/images/hero.jpg", not an array.';
+            return;
+        }
+
+        if ($multiple && is_array($value) && array_values($value) !== $value) {
+            $errors[$path] = 'Expected an array of media path strings.';
+            return;
+        }
+
+        $values = is_array($value) ? array_values($value) : [$value];
+        $max = $spec['max_items'] ?? null;
+
+        if (is_int($max) && count($values) > $max) {
+            $errors[$path] = 'At most ' . $max . ' file(s) allowed here, ' . count($values) . ' given.';
+            return;
+        }
+
+        foreach ($values as $single) {
+            $normalised = MediaPaths::normalise($single, $error);
+
+            if ($error !== null) {
+                $errors[$path] = $error;
+                return;
+            }
+
+            if ($normalised === '') {
+                continue;
+            }
+
+            if (!MediaPaths::fileExists($normalised)) {
+                $errors[$path] = 'No file at "' . $normalised . '" in the media library. '
+                    . 'Call GET /media or GET /media/search to find the real path; this API cannot upload files.';
+                return;
+            }
+
+            if (($spec['mode'] ?? null) === 'image' && !MediaPaths::isImageLike($normalised)) {
+                $errors[$path] = '"' . $normalised . '" is not an image, SVG or video, and this field renders as an image.';
+                return;
             }
         }
     }

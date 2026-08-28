@@ -23,6 +23,7 @@ class PageWriter extends ContentWriter
             'slug',
             'metaTitle',
             'metaDescription',
+            'ogImage',
             'menuStyle',
             'menuHide',
             'parent_id',
@@ -31,6 +32,18 @@ class PageWriter extends ContentWriter
             'title',
             'slug',
         ],
+    ];
+
+    /**
+     * @var array recordMediaFields media attributes on the record itself, per
+     * section. Blocks carry their media inside blueprint fieldsets and so have
+     * a spec to read; these few hang off the record and need one declared.
+     */
+    protected static $recordMediaFields = [
+        'Builder' => [
+            'ogImage' => ['media' => true, 'max_items' => 1, 'mode' => 'image'],
+        ],
+        'Prefill' => [],
     ];
 
     /**
@@ -49,7 +62,7 @@ class PageWriter extends ContentWriter
             $pageData['slug'] = Str::slug((string) ($pageData['title'] ?? ''));
         }
 
-        static::validatePage($pageData, true);
+        static::validatePage($pageData, true, $section);
         static::validateSlugAvailable($pageData['slug'], $pageData['parent_id'] ?? null, null, $section);
 
         if ($blocks !== null) {
@@ -61,8 +74,8 @@ class PageWriter extends ContentWriter
 
             static::fillPage($page, $pageData, $section);
 
-            // Pages start as drafts: a human assigns media and publishes. A
-            // draft prefill would silently break every block referencing it, so
+            // Pages start as drafts: a human reviews and publishes. A draft
+            // prefill would silently break every block referencing it, so
             // prefills go live immediately.
             $page->is_enabled = $section === BlockSchema::SECTION
                 ? false
@@ -90,7 +103,7 @@ class PageWriter extends ContentWriter
         SchemaGuard::assertReady($section);
 
         if ($pageData) {
-            static::validatePage($pageData, false);
+            static::validatePage($pageData, false, $section);
 
             if (array_key_exists('slug', $pageData)) {
                 static::validateSlugAvailable(
@@ -204,11 +217,16 @@ class PageWriter extends ContentWriter
     protected static function fillPage(EntryRecord $page, array $data, string $section): void
     {
         $fields = static::$sectionFields[$section] ?? static::$sectionFields['Builder'];
+        $media = static::$recordMediaFields[$section] ?? [];
 
         foreach ($fields as $field) {
-            if (array_key_exists($field, $data)) {
-                $page->{$field} = $data[$field];
+            if (!array_key_exists($field, $data)) {
+                continue;
             }
+
+            $page->{$field} = isset($media[$field])
+                ? static::castMediaIn($data[$field], $media[$field])
+                : $data[$field];
         }
     }
 
@@ -229,9 +247,15 @@ class PageWriter extends ContentWriter
     /**
      * validatePage checks the record attributes.
      */
-    protected static function validatePage(array $data, bool $creating): void
+    protected static function validatePage(array $data, bool $creating, string $section = BlockSchema::SECTION): void
     {
         $errors = [];
+
+        foreach (static::$recordMediaFields[$section] ?? [] as $field => $spec) {
+            if (array_key_exists($field, $data)) {
+                static::validateMedia($data[$field], $spec, 'page.' . $field, $errors);
+            }
+        }
 
         if ($creating) {
             foreach (['title', 'slug'] as $required) {

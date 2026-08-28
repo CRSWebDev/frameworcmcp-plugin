@@ -242,7 +242,31 @@ abstract class ContentSerializer
             return array_values((array) $value);
         }
 
-        if ($type === 'mediafinder' || $type === 'fileupload') {
+        if ($type === 'mediafinder') {
+            // A stable empty shape per cardinality is what makes a block
+            // round-trip: read a block, write it back unchanged, and the media
+            // must land identically. maxItems:1 is a string column ('' when
+            // unset); anything else is jsonable and reads as a list.
+            if (($spec['max_items'] ?? null) === 1) {
+                return $value === null ? '' : $value;
+            }
+
+            if ($value === null || $value === '') {
+                return [];
+            }
+
+            if (is_string($value)) {
+                // Defensive: a jsonable value that reached us undecoded.
+                $decoded = json_decode($value, true);
+
+                return is_array($decoded) ? array_values($decoded) : [$value];
+            }
+
+            return array_values((array) $value);
+        }
+
+        if ($type === 'fileupload') {
+            // An attachment relation, never coerced — it is read-only anyway.
             if ($value === null || $value === '') {
                 return ($spec['max_items'] ?? null) === 1 ? '' : $value;
             }

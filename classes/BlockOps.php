@@ -147,10 +147,15 @@ class BlockOps
      * extractToPrefill moves a page block into a new Prefill entry.
      *
      * Prefills exist to de-duplicate: a section repeated across pages should
-     * live once and be referenced everywhere. The block's serialized form is
-     * rewritten into the new entry through the internal write path — skipping
-     * the media-rejecting API validation — so human-assigned media survives
-     * the move. The page block is replaced in place by a Prefill reference.
+     * live once and be referenced everywhere. The page block is replaced in
+     * place by a Prefill reference.
+     *
+     * The serialized block is rewritten into the new entry through the internal
+     * write path, deliberately skipping API validation: these paths come out of
+     * storage, and re-checking them would fail the move over a file a human has
+     * since deleted from the library. Media travels because prepare() writes
+     * media fields — before v1.2.0 it dropped them and this operation silently
+     * lost every image, despite the docblock here claiming otherwise.
      */
     public static function extractToPrefill(EntryRecord $page, $blockId, string $title): array
     {
@@ -280,6 +285,10 @@ class BlockOps
         // alongside the base fields on the serialized block but are not part
         // of the base object. Carry them over when the payload omits or
         // empties them, so updating one block does not silently unlink it.
+        //
+        // Note the deliberate asymmetry with media below: an empty reference
+        // still means "keep", because there is no separate way to express a
+        // link and no reason for a caller to unlink one by blanking it.
         foreach ($schema['base'] as $name => $spec) {
             if (!isset($spec['column'])) {
                 continue;
@@ -309,12 +318,15 @@ class BlockOps
     protected static function mergeFieldsMedia(array $new, array $old, array $schema): array
     {
         foreach ($schema as $name => $spec) {
-            if (!empty($spec['readonly'])) {
-                $newEmpty = ContentWriter::isEmptyValue($new[$name] ?? null);
-                $oldValue = $old[$name] ?? null;
-
-                if ($newEmpty && !ContentWriter::isEmptyValue($oldValue)) {
-                    $new[$name] = $oldValue;
+            if (!empty($spec['media']) || !empty($spec['readonly'])) {
+                // A key absent from the payload inherits the stored value, so a
+                // partial update never drops a file. A key that is present —
+                // even as null, "" or [] — is written verbatim, which is how a
+                // caller clears a field. isEmptyValue can no longer decide
+                // this: now that media is assignable, "empty" is an
+                // instruction rather than an omission.
+                if (!array_key_exists($name, $new) && array_key_exists($name, $old)) {
+                    $new[$name] = $old[$name];
                 }
                 continue;
             }

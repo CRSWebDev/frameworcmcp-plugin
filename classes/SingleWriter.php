@@ -62,8 +62,9 @@ class SingleWriter extends ContentWriter
      * write updates the single for the active site.
      *
      * Scalars are assigned; a repeater or nested form key present in the
-     * payload replaces its stored rows wholesale (they carry no media the API
-     * could lose — media fields themselves are rejected by validation).
+     * payload replaces its stored rows wholesale. No single's repeater rows
+     * carry media today, so a replace loses nothing; the media fields that do
+     * exist sit at the top level and are written like any other value.
      */
     public static function write(string $handle, array $data): array
     {
