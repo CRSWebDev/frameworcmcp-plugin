@@ -15,11 +15,13 @@ use CRSCompany\FrameworCMcp\Classes\SettingsBridge;
 use CRSCompany\FrameworCMcp\Classes\SchemaGuard;
 use CRSCompany\FrameworCMcp\Classes\SingleWriter;
 use CRSCompany\FrameworCMcp\Classes\SiteResolver;
+use CRSCompany\FrameworCMcp\Classes\SiteSettingsBridge;
 use CRSCompany\FrameworCMcp\Classes\TokenGuard;
 use Illuminate\Http\Request;
 use Media\Classes\MediaLibrary;
 use Media\Classes\MediaLibraryItem;
 use October\Rain\Database\ModelException;
+use October\Rain\Exception\ValidationException;
 use Tailor\Models\EntryRecord;
 use Throwable;
 
@@ -61,6 +63,11 @@ class Api
             }
 
             return ApiException::invalid($errors, $ex->getMessage())->toResponse();
+        }
+        catch (ValidationException $ex) {
+            // Thrown by model hooks outside the Validation trait, e.g. the
+            // settings models refusing SCSS that does not compile.
+            return ApiException::invalid($ex->getErrors()->getMessages(), $ex->getMessage())->toResponse();
         }
         catch (Throwable $ex) {
             // Surface the reason rather than an HTML error page; the MCP only
@@ -734,6 +741,24 @@ class Api
             }
 
             return SettingsBridge::write($fields);
+        });
+    }
+
+    public static function getSiteSettings(Request $request)
+    {
+        return static::run($request, fn () => SiteSettingsBridge::read());
+    }
+
+    public static function updateSiteSettings(Request $request)
+    {
+        return static::run($request, function (Request $request) {
+            $fields = $request->input('fields');
+
+            if (!is_array($fields)) {
+                throw ApiException::invalid(['fields' => 'Expected {"fields": {...}}.']);
+            }
+
+            return SiteSettingsBridge::write($fields);
         });
     }
 

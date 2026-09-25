@@ -80,4 +80,8 @@ Route::group([
     // FrameworC settings (global)
     Route::get('settings', fn (Request $r) => Api::getSettings($r));
     Route::patch('settings', fn (Request $r) => Api::updateSettings($r));
+
+    // FrameworC settings (per site)
+    Route::get('site-settings', fn (Request $r) => Api::getSiteSettings($r));
+    Route::patch('site-settings', fn (Request $r) => Api::updateSiteSettings($r));
 });

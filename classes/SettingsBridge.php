@@ -31,6 +31,56 @@ class SettingsBridge
     protected static $schema = null;
 
     /**
+     * @var string scope reported in read responses.
+     */
+    protected static $scope = 'global';
+
+    /**
+     * fieldDefinitions returns the raw field definitions from fields.yaml.
+     */
+    protected static function fieldDefinitions(): array
+    {
+        $path = plugins_path('crscompany/frameworc/models/frameworcsetting/fields.yaml');
+
+        if (!file_exists($path)) {
+            throw new ApiException('The FrameworC settings definition is missing. Is the FrameworC plugin installed?', 500);
+        }
+
+        $config = (array) Yaml::parseFile($path);
+
+        return (array) (
+            $config['fields']['wrapper']['form']['tabs']['fields']
+            ?? $config['fields']['wrapper']['form']['fields']
+            ?? []
+        );
+    }
+
+    /**
+     * storedValues returns every stored value, hidden ones included.
+     */
+    protected static function storedValues(): array
+    {
+        return (array) FrameworcSetting::instance()->wrapper;
+    }
+
+    /**
+     * storeValues merges the given values into the stored settings.
+     */
+    protected static function storeValues(array $values): void
+    {
+        // Merge into the full stored wrapper so every hidden key survives
+        // untouched.
+        $wrapper = static::storedValues();
+
+        foreach ($values as $name => $value) {
+            $wrapper[$name] = $value;
+        }
+
+        FrameworcSetting::set('wrapper', $wrapper);
+        FrameworcSetting::clearInternalCache();
+    }
+
+    /**
      * schema derives the exposed fields from the settings fields.yaml.
      */
     public static function schema(): array
@@ -39,18 +89,7 @@ class SettingsBridge
             return static::$schema;
         }
 
-        $path = plugins_path('crscompany/frameworc/models/frameworcsetting/fields.yaml');
-
-        if (!file_exists($path)) {
-            throw new ApiException('The FrameworC settings definition is missing. Is the FrameworC plugin installed?', 500);
-        }
-
-        $config = (array) Yaml::parseFile($path);
-        $fields = (array) (
-            $config['fields']['wrapper']['form']['tabs']['fields']
-            ?? $config['fields']['wrapper']['form']['fields']
-            ?? []
-        );
+        $fields = static::fieldDefinitions();
 
         $out = [];
 
@@ -89,19 +128,19 @@ class SettingsBridge
      */
     public static function read(): array
     {
-        $wrapper = (array) FrameworcSetting::instance()->wrapper;
+        $stored = static::storedValues();
         $schema = static::schema();
 
         $fields = [];
 
         foreach ($schema as $name => $spec) {
-            $fields[$name] = array_key_exists($name, $wrapper)
-                ? $wrapper[$name]
+            $fields[$name] = array_key_exists($name, $stored)
+                ? $stored[$name]
                 : ($spec['default'] ?? null);
         }
 
         return [
-            'scope' => 'global',
+            'scope' => static::$scope,
             'fields' => $fields,
             'schema' => $schema,
         ];
@@ -149,16 +188,7 @@ class SettingsBridge
             throw ApiException::invalid($errors);
         }
 
-        // Merge into the full stored wrapper so every hidden key survives
-        // untouched.
-        $wrapper = (array) FrameworcSetting::instance()->wrapper;
-
-        foreach ($coerced as $name => $value) {
-            $wrapper[$name] = $value;
-        }
-
-        FrameworcSetting::set('wrapper', $wrapper);
-        FrameworcSetting::clearInternalCache();
+        static::storeValues($coerced);
 
         return static::read();
     }
