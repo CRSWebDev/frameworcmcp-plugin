@@ -3,3 +3,4 @@ v1.0.1: Fail cleanly when the Tailor schema is behind the blueprints (missing si
 v1.1.0: Per-block CRUD on pages and prefills, extract-to-prefill, full forms/menus/prefills CRUD, writable single repeaters, FrameworC settings endpoint
 v1.1.1: Round-trip rejection fixes for per-block CRUD
 v1.2.0: Assign existing media library files to any mediafinder field (blocks, page ogImage, singles); browse and search the library via GET media and GET media/search
+v1.3.0: Per-site FrameworC settings (site SCSS) via GET/PATCH site-settings; model validation errors return 422

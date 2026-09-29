@@ -12,7 +12,8 @@ use Illuminate\Http\Request;
  * purpose.
  *
  * Version pairs: plugin v1.2.0 <-> MCP v0.5.0 added GET media and
- * GET media/search, and made mediafinder fields writable.
+ * GET media/search, and made mediafinder fields writable. Plugin v1.3.0 <->
+ * MCP v0.6.0 added GET/PATCH site-settings (needs FrameworC plugin v1.10.0).
  */
 Route::group([
     'prefix' => 'api/mcp/v1',
