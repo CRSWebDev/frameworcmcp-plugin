@@ -50,7 +50,7 @@ class BlockSchema
      */
     protected static $guidance = [
         'Header' => 'Always the first block on a page. Use H1/H2 in the headline here; every other block uses H2/H3. One per page.',
-        'Section' => 'The default choice for any paragraph plus image content. Pick a variant matching the ratio of text to visual. Use "textAndText" for two text columns, and an "embed*" variant for a YouTube video, map iframe or similar.',
+        'Section' => 'The default choice for any paragraph plus image content. Pick a variant matching the ratio of text to visual. Use "imgBleed" for an image running to the edge of the viewport next to half-width text, "textAndText" for two text columns, and an "embed*" variant for a YouTube video, map iframe or similar.',
         'Tiles' => 'Feature lists, service grids, value-proposition card rows, or any list of related items.',
         'Slider' => 'Image-heavy content that benefits from sequential browsing: testimonials, step-by-step walkthroughs, gallery-like rows.',
         'Tabs' => 'Long content split into topic tabs. Do not use for only one or two sections; a Section block is better.',
