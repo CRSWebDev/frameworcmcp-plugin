@@ -26,6 +26,9 @@ class PageWriter extends ContentWriter
             'ogImage',
             'menuStyle',
             'menuHide',
+            'jsonLdPageType',
+            'jsonLdDisable',
+            'jsonLdCustom',
             'parent_id',
         ],
         'Prefill' => [
@@ -33,6 +36,11 @@ class PageWriter extends ContentWriter
             'slug',
         ],
     ];
+
+    /**
+     * @var array jsonLdPageTypes options of the Builder `jsonLdPageType` dropdown.
+     */
+    protected static $jsonLdPageTypes = ['WebPage', 'AboutPage', 'ContactPage', 'CollectionPage', 'FAQPage'];
 
     /**
      * @var array recordMediaFields media attributes on the record itself, per
@@ -262,6 +270,20 @@ class PageWriter extends ContentWriter
                 if (trim((string) ($data[$required] ?? '')) === '') {
                     $errors['page.' . $required] = 'This field is required.';
                 }
+            }
+        }
+
+        if (array_key_exists('jsonLdPageType', $data)
+            && !in_array($data['jsonLdPageType'], static::$jsonLdPageTypes, true)
+        ) {
+            $errors['page.jsonLdPageType'] = 'Must be one of: ' . implode(', ', static::$jsonLdPageTypes) . '.';
+        }
+
+        // The frontend silently drops invalid custom JSON-LD, so reject it here
+        // where the caller can still see why.
+        if (array_key_exists('jsonLdCustom', $data) && trim((string) $data['jsonLdCustom']) !== '') {
+            if (!is_string($data['jsonLdCustom']) || !is_array(json_decode($data['jsonLdCustom'], true))) {
+                $errors['page.jsonLdCustom'] = 'Must be a JSON object or array encoded as a string, without a script tag.';
             }
         }
 

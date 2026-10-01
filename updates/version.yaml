@@ -5,3 +5,4 @@ v1.1.1: Round-trip rejection fixes for per-block CRUD
 v1.2.0: Assign existing media library files to any mediafinder field (blocks, page ogImage, singles); browse and search the library via GET media and GET media/search
 v1.3.0: Per-site FrameworC settings (site SCSS) via GET/PATCH site-settings; model validation errors return 422
 v1.3.1: Section imgBleed variant in block authoring guidance
+v1.4.0: Builder page JSON-LD fields (jsonLdPageType, jsonLdDisable, jsonLdCustom) readable and writable, with validation

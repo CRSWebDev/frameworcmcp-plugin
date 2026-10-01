@@ -37,6 +37,9 @@ class PageSerializer extends ContentSerializer
             'ogImage' => static::castOut($page->ogImage, ['type' => 'mediafinder', 'max_items' => 1]),
             'menuStyle' => $page->menuStyle,
             'menuHide' => $page->menuHide,
+            'jsonLdPageType' => $page->jsonLdPageType ?: 'WebPage',
+            'jsonLdDisable' => (bool) $page->jsonLdDisable,
+            'jsonLdCustom' => (string) $page->jsonLdCustom,
             'translations' => static::translations($page),
             'builder' => static::blocks($page->builder),
         ];
