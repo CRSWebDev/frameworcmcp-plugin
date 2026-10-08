@@ -64,6 +64,7 @@ class BlockSchema
         'MenuBlock' => 'Embeds an existing Menu entry as page content. Get its id from GET /menus.',
         'ImageStrip' => 'A horizontally scrolling strip of logos or photos, optionally auto-scrolling.',
         'InstaFeed' => 'A live Instagram feed grid. Requires an Instagram token.',
+        'GoogleReviews' => 'Customer reviews of the business from Google, with its average rating. Reviews are downloaded daily into a GooglePlace entry set up in the backend (Builder → Google recenze); leave the block-level `place` empty to use the first one. Never write review text into other blocks by hand.',
     ];
 
     /**
